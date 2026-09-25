@@ -1,0 +1,605 @@
+{% extends "base.html" %}
+{% block title %}{{ character.name }} — Ficha RPG{% endblock %}
+
+{% block content %}
+<script id="char-data" type="application/json">{{ character | tojson }}</script>
+
+<div class="sheet">
+
+  <div id="save-status" class="save-status save-ok">Salvo</div>
+
+  <!-- HEADER -->
+  <header class="sheet-header">
+    <div class="header-name">
+      <div class="header-kicker">Grimório de Mesa</div>
+      <input id="char-name" data-field="name" type="text" class="input-name" placeholder="Nome do personagem" value="{{ character.name }}">
+      <div class="header-meta">
+        <label class="meta-field">
+          <span>Classe</span>
+          <input id="char-class" data-field="class_name" type="text" placeholder="—" value="{{ character.class_name }}">
+        </label>
+        <label class="meta-field">
+          <span>Nível</span>
+          <input id="char-level" data-field="level" type="number" min="1" max="20" value="{{ character.level }}">
+        </label>
+        <label class="meta-field">
+          <span>Raça/Origem</span>
+          <input id="char-origin" data-field="origin" type="text" placeholder="—" value="{{ character.origin }}">
+        </label>
+        <label class="meta-field">
+          <span>Antecedente</span>
+          <input id="char-background" data-field="background" type="text" placeholder="—" value="{{ character.background }}">
+        </label>
+        <label class="meta-field">
+          <span>Tendência</span>
+          <input id="char-alignment" data-field="alignment" type="text" placeholder="—" value="{{ character.alignment }}">
+        </label>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="prof-block">
+        <span class="stat-label">Proficiência</span>
+        <input id="prof-bonus" data-field="proficiency_bonus" type="number" min="1" max="9" value="{{ character.proficiency_bonus }}" class="input-prof">
+      </div>
+      <div class="inspiration-block">
+        <span class="stat-label">Inspiração</span>
+        <button id="inspiration-btn" class="btn-inspiration {% if character.inspiration %}active{% endif %}" title="Inspiração">★</button>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-sm" id="btn-print" title="Imprimir ficha">⎙ Print</button>
+        <a href="/api/character/{{ character.id }}/export" class="btn btn-sm" title="Exportar JSON">↓ JSON</a>
+        <label class="btn btn-sm" title="Importar JSON">
+          ↑ JSON
+          <input type="file" id="import-file" accept=".json" style="display:none">
+        </label>
+        {% if characters | length > 1 %}
+        <a href="/" class="btn btn-sm">Personagens</a>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  <!-- ATRIBUTOS -->
+  <div class="attrs-strip">
+    {% for attr_id, attr_name in [('str','Força'),('dex','Destreza'),('con','Constituição'),('int','Inteligência'),('wis','Sabedoria'),('cha','Carisma')] %}
+    <div class="attr-card" data-attr="{{ attr_id }}">
+      <div class="attr-name">{{ attr_name }}</div>
+      <div class="attr-mod" id="mod-{{ attr_id }}">+0</div>
+      <input class="attr-score" id="attr-{{ attr_id }}" data-field="attributes.{{ attr_id }}" type="number" min="1" max="30" value="{{ character.attributes[attr_id] }}">
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- RESISTÊNCIAS -->
+  <div class="saves-strip-wrap">
+    <div id="saves-list" class="saves-strip"></div>
+  </div>
+
+  <!-- STATUS BAR -->
+  <section class="status-bar">
+
+    <!-- Coluna esquerda: HP + cards situacionais -->
+    <div class="status-left">
+
+      <div class="status-card hp-card">
+        <div class="stat-label">Pontos de Vida</div>
+        <div class="hp-row">
+          <input id="hp-current" data-field="hit_points.current" type="number" min="0" class="input-hp-current" value="{{ character.hit_points.current }}">
+          <span class="hp-sep">/</span>
+          <input id="hp-max" data-field="hit_points.max" type="number" min="0" class="input-hp-max" value="{{ character.hit_points.max }}">
+        </div>
+        <div class="hp-temp-row">
+          <span class="hp-temp-label">Temp:</span>
+          <input id="hp-temp" data-field="hit_points.temporary" type="number" min="0" class="input-hp-temp" value="{{ character.hit_points.temporary }}">
+          <span class="hp-temp-label" style="margin-left:8px">DV:</span>
+          <input id="hit-dice" data-field="hit_points.hit_dice" type="text" placeholder="1d8" class="input-hit-dice" value="{{ character.hit_points.hit_dice }}">
+          <button class="btn btn-sm btn-muted" id="btn-roll-hd" title="Rolar dado de vida ao upar de nível">🎲 Upar</button>
+        </div>
+        <div class="hp-controls">
+          <input id="hp-delta" type="number" min="0" placeholder="Valor" class="input-delta">
+          <button class="btn btn-danger" id="btn-damage">Dano</button>
+          <button class="btn btn-success" id="btn-heal">Cura</button>
+          <button class="btn btn-muted" id="btn-restore-hp" title="Restaurar PV máximo">↺</button>
+        </div>
+      </div>
+
+      <!-- Cards situacionais: sempre visíveis, indicam estado ativo/inativo -->
+      <div class="situational-cards">
+
+        <div class="status-card sit-card" id="energ-status-card">
+          <div class="sit-top">
+            <span class="sit-name">Energização</span>
+            <span class="sit-badge sit-badge-off">inativa</span>
+          </div>
+          <div class="sit-hero">
+            <span class="sit-hero-icon">⚡</span>
+            <span class="sit-hero-value" id="energ-status-display">—</span>
+          </div>
+          <div class="sit-desc">dano extra acumulado</div>
+          <button class="btn btn-sm btn-muted sit-action-btn hidden" id="btn-energ-reset-bar">↺ Resetar</button>
+        </div>
+
+        <div class="status-card sit-card" id="vantagem-status-card">
+          <div class="sit-top">
+            <span class="sit-name">Vantagem</span>
+            <span class="sit-badge sit-badge-off">inativa</span>
+          </div>
+          <div class="sit-hero">
+            <span class="sit-hero-icon sit-van-icon">✦</span>
+          </div>
+          <div class="sit-desc">próximo ataque</div>
+          <button class="btn btn-sm btn-muted sit-action-btn hidden" id="btn-vantagem-consumir">Consumir ×</button>
+        </div>
+
+      </div>
+
+    </div><!-- /status-left -->
+
+    <!-- Coluna direita: flex coluna com 3 linhas -->
+    <div class="status-right">
+
+      <!-- Linha 1: CA | Iniciativa | Deslocamento -->
+      <div class="status-card combat-stats-card">
+        <div class="combat-stat">
+          <div class="stat-label">CA</div>
+          <div id="armor-class-display" class="computed-big">10</div>
+          <div class="stat-sublabel hidden" id="ca-stacks-badge"></div>
+          <div id="defense-talent-toggles" class="defense-talent-toggles"></div>
+        </div>
+        <div class="combat-stat-sep"></div>
+        <div class="combat-stat">
+          <div class="stat-label">Iniciativa</div>
+          <div id="initiative-display" class="computed-big">+0</div>
+          <input id="initiative-bonus" data-field="initiative_bonus_manual" type="number" class="input-sub" value="{{ character.initiative_bonus_manual }}" title="Bônus manual">
+        </div>
+        <div class="combat-stat-sep"></div>
+        <div class="combat-stat">
+          <div class="stat-label">Deslocamento</div>
+          <div class="speed-row speed-row-center">
+            <input id="speed" data-field="speed" type="number" min="0" class="input-stat-center" value="{{ character.speed }}">
+            <span class="speed-unit">m</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Linha 2: CD Magia | Ataque Mágico -->
+      <div class="status-card spell-stats-card">
+        <div class="spell-stat">
+          <div class="stat-label">CD Magia</div>
+          <div id="spell-dc-display" class="computed-big">10</div>
+          <div class="stat-sublabel">8 + Prof + CAR</div>
+        </div>
+        <div class="combat-stat-sep"></div>
+        <div class="spell-stat">
+          <div class="stat-label">Atq Mágico</div>
+          <div id="spell-atk-display" class="computed-big">+0</div>
+          <div class="stat-sublabel">Prof + CAR</div>
+        </div>
+      </div>
+
+      <!-- Linha 3: Instabilidade Sinfônica -->
+      <div class="status-card instab-sinf-card" id="instab-sinf-card">
+        <div class="instab-header">
+          <span class="stat-label">⚡ Instabilidade Sinfônica <span class="instab-count" id="instab-count">0</span></span>
+          <button class="btn btn-sm btn-muted" id="btn-instab-turn" title="Avança 1 turno">⏭ Turno</button>
+        </div>
+        <div class="instab-debuff-desc">Alvo recebe +1d8 de dano e perde 1 de CA por 3 turnos.</div>
+        <div id="instab-targets-list" class="instab-list"></div>
+        <div class="instab-controls">
+          <input id="instab-name-input" type="text" placeholder="Nome do alvo..." class="instab-input">
+          <button class="btn btn-sm" id="btn-instab-add">+ Alvo</button>
+        </div>
+      </div>
+
+    </div><!-- /status-right -->
+
+  </section>
+
+  <!-- DESCANSO -->
+  <div class="rest-bar">
+    <div id="talento-toggles" class="talento-toggles"></div>
+    <button class="btn btn-rest btn-short-rest" id="btn-short-rest">☽ Descanso Curto</button>
+    <button class="btn btn-rest btn-long-rest"  id="btn-long-rest">★ Descanso Longo</button>
+  </div>
+
+  <!-- MAIN GRID: tabs | rolagens -->
+  <div class="main-grid">
+
+    <main class="col-tabs">
+      <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="abilities">Habilidades</button>
+        <button class="tab-btn tab-btn-sinfonia" data-tab="sinfonia">🎵 Sinfonia</button>
+        <button class="tab-btn" data-tab="combat">Combate</button>
+        <button class="tab-btn" data-tab="skills">Perícias</button>
+        <button class="tab-btn" data-tab="inventory">Itens</button>
+        <button class="tab-btn" data-tab="spells">Magias</button>
+        <button class="tab-btn" data-tab="notes">Anotações</button>
+      </nav>
+
+      <!-- ABILITIES TAB -->
+      <div class="tab-panel active" id="tab-abilities">
+        <div class="abilities-toolbar">
+          <button class="btn btn-sm" id="btn-add-ability">+ Habilidade</button>
+          <button class="btn btn-sm btn-muted" id="btn-restore-all-uses" title="Restaurar todos os usos">↺ Todos os Usos</button>
+        </div>
+        <div id="abilities-list" class="abilities-list"></div>
+
+        <div class="talentos-section">
+          <div class="talentos-header">
+            <h3 class="talentos-title">Talentos</h3>
+            <button class="btn btn-sm" id="btn-add-talento">+ Talento</button>
+          </div>
+          <div id="talentos-list" class="talentos-list"></div>
+        </div>
+      </div>
+
+      <!-- COMBAT TAB -->
+      <div class="tab-panel" id="tab-combat">
+        <div class="combat-section">
+          <div class="combat-section-header">
+            <div>
+              <h3>Armas e Ataques</h3>
+              <p>Acerto = atributo de ataque + proficiência + bônus adicional</p>
+            </div>
+            <button class="btn btn-sm" id="btn-add-attack">+ Cadastrar arma</button>
+          </div>
+          <div id="combat-weapons-list" class="combat-weapons-list"></div>
+        </div>
+      </div>
+
+      <!-- SKILLS TAB -->
+      <div class="tab-panel" id="tab-skills">
+        <div id="skills-list" class="skills-list"></div>
+      </div>
+
+      <!-- INVENTORY TAB -->
+      <div class="tab-panel" id="tab-inventory">
+        <div class="currency-row">
+          {% for coin, label in [('copper','CO'),('silver','PR'),('electrum','EL'),('gold','PO'),('platinum','PL')] %}
+          <label class="currency-field">
+            <input data-field="currency.{{ coin }}" type="number" min="0" class="input-currency" value="{{ character.currency[coin] }}">
+            <span>{{ label }}</span>
+          </label>
+          {% endfor %}
+        </div>
+
+        <nav class="inv-tab-nav">
+          <button class="inv-tab-btn active" data-inv-tab="weapons">Armas</button>
+          <button class="inv-tab-btn" data-inv-tab="armor">Armaduras</button>
+          <button class="inv-tab-btn" data-inv-tab="utility">Utilitários</button>
+        </nav>
+
+        <div class="inv-tab-panel active" id="inv-tab-weapons">
+          <table class="inventory-table">
+            <thead><tr><th>Nome</th><th>Dano</th><th>Tipo</th><th>Alcance</th><th>Qtd</th><th>Eq</th><th>🎲</th><th></th></tr></thead>
+            <tbody id="inv-weapons-tbody"></tbody>
+          </table>
+          <button class="btn btn-sm" id="btn-add-weapon">+ Arma</button>
+        </div>
+
+        <div class="inv-tab-panel" id="inv-tab-armor">
+          <table class="inventory-table">
+            <thead><tr><th>Nome</th><th>CA Base</th><th>Atributo</th><th>CA Total</th><th>Status</th><th></th></tr></thead>
+            <tbody id="inv-armor-tbody"></tbody>
+          </table>
+          <button class="btn btn-sm" id="btn-add-armor">+ Armadura</button>
+        </div>
+
+        <div class="inv-tab-panel" id="inv-tab-utility">
+          <div id="inv-util-list" class="util-list"></div>
+          <button class="btn btn-sm" id="btn-add-util">+ Item</button>
+        </div>
+      </div>
+
+      <!-- SINFONIA TAB -->
+      <div class="tab-panel" id="tab-sinfonia">
+
+        <div class="sinfonia-counters">
+
+          <!-- COLUNA ESQUERDA: Stacks + Perícia -->
+          <div class="sin-left-col">
+
+            <!-- SINFONIA STACKS -->
+            <div class="sin-counter-card">
+              <div class="sin-counter-title">🎵 Sinfonia Stacks</div>
+              <div class="sin-counter-sub">Acumula infinitamente. Todo uso da sinfonia conta aqui.</div>
+              <div class="sin-number" id="sin-stacks-num">0</div>
+              <div id="stacks-threshold-display" class="stacks-threshold-display"></div>
+              <div class="sin-btns">
+                <button class="sin-adj-btn" data-sin-adj="-5">−5</button>
+                <button class="sin-adj-btn" data-sin-adj="-1">−1</button>
+                <button class="sin-adj-btn sin-plus" data-sin-adj="1">+1</button>
+                <button class="sin-adj-btn sin-plus" data-sin-adj="5">+5</button>
+              </div>
+            </div>
+
+            <!-- PERÍCIA DE SINFONIA -->
+            <div class="sin-counter-card sin-pericia-card">
+              <div>
+                <div class="sin-pericia-label">🎶 Perícia de Sinfonia</div>
+                <div class="sin-pericia-sub">8 + CAR + 1 por 1500 stacks</div>
+              </div>
+              <div class="sin-pericia-val" id="sinfonia-skill-value">+0</div>
+              <button class="btn sin-pericia-roll-btn" id="btn-roll-sinfonia-tab">🎲 Rolar Sinfonia</button>
+            </div>
+
+          </div><!-- /sin-left-col -->
+
+          <!-- BRIGÃO SINFÔNICO -->
+          <div class="sin-counter-card brigao-card">
+            <div class="sin-counter-title">⚔ Brigão Sinfônico</div>
+            <div class="sin-counter-sub">Cada 5 cargas: +1 DES/CON/CAR. Com 15: Extra Dado.</div>
+            <div class="brigao-num-row">
+              <div class="sin-number" id="brigao-num">0</div>
+              <span class="brigao-denom">/15</span>
+            </div>
+            <div class="brigao-pips" id="brigao-pips"></div>
+            <div class="sin-btns">
+              <button class="sin-adj-btn" data-brigao-adj="-5">−5</button>
+              <button class="sin-adj-btn" data-brigao-adj="-1">−1</button>
+              <button class="sin-adj-btn sin-plus" data-brigao-adj="1">+1</button>
+              <button class="sin-adj-btn sin-plus" data-brigao-adj="5">+5</button>
+            </div>
+            <div id="brigao-status-text" class="brigao-status"></div>
+            <div id="brigao-extra-dice" style="margin-top:4px"></div>
+            <button class="btn" id="btn-sin-perf" style="width:100%;margin-top:8px">+<span id="perf-gain-num">2</span> Sinfonia / Performance</button>
+          </div>
+
+        </div><!-- /sinfonia-counters -->
+
+        <!-- KIT SINFÔNICO -->
+        <div class="kit-sinfonico">
+          <h2 class="section-title" style="margin-bottom:10px">Kit Sinfônico</h2>
+          <div class="kit-grid">
+
+            <!-- Fortalecimento Musical -->
+            <div class="kit-card">
+              <div class="kit-card-header">
+                <span class="kit-name">Fortalecimento Musical</span>
+                <span class="ability-tag tag-action">Reação · 4/curto</span>
+              </div>
+              <div class="kit-card-desc">Quando qualquer alvo acerta ataque, reage com explosão musical: 2d8 de dano (esfera 2m). Dano convertido em cargas Sinfonia.</div>
+              <div class="kit-card-footer">
+                <div class="kit-uses" id="kit-fort-uses"></div>
+                <button class="btn btn-sm" id="btn-fort-usar">Usar (2d8 → Stacks)</button>
+                <button class="btn btn-sm btn-muted" id="btn-fort-rest" title="Descanso curto">↺</button>
+              </div>
+            </div>
+
+            <!-- Bomba Sinfônica -->
+            <div class="kit-card">
+              <div class="kit-card-header">
+                <span class="kit-name">Bomba Sinfônica</span>
+                <span class="ability-tag tag-action">Ação · 5🎵</span>
+              </div>
+              <div class="kit-card-desc">Esferas 5cm, 6m alcance, raio 2m. Até 3d10+bônus mágico distribuídos. Teste CON/CAR para metade e evitar Instabilidade Sinfônica. Custa 5 Brigão.</div>
+              <div class="kit-card-footer">
+                <button class="btn btn-sm" id="btn-bomba-usar">Usar (3d10 · −5 Brigão)</button>
+              </div>
+            </div>
+
+            <!-- Energização Sinfônica -->
+            <div class="kit-card" id="kit-energizacao">
+              <div class="kit-card-header">
+                <span class="kit-name">Energização Sinfônica</span>
+                <span class="ability-tag tag-passive">Passiva · 5🎵</span>
+              </div>
+              <div class="kit-card-desc">Gasta 5 Brigão. Habilidades sinfônicas dão +2d8 de dano e forçam teste CON/CAR para Instabilidade Sinfônica (+1d8, −1 CA, 3 turnos). Dá 1 dado de inspiração a aliado.</div>
+              <div class="kit-card-footer">
+                <button class="btn btn-sm btn-danger" id="btn-energ-usar">+2d8 (−5 🎵 Brigão)</button>
+                <button class="btn btn-sm btn-muted hidden" id="btn-energ-reset" title="Resetar ao fim do combate">↺ Fim do combate</button>
+              </div>
+            </div>
+
+            <!-- Sincronização Sinfônica -->
+            <div class="kit-card" id="kit-sincronizacao">
+              <div class="kit-card-header">
+                <span class="kit-name">Sincronização Sinfônica</span>
+                <span class="ability-tag tag-action">Reação · 3/curto</span>
+              </div>
+              <div class="kit-card-desc">2 aliados com mesma iniciativa por 3 turnos (+1d8 dano/cura). Por cada acerto de aliado: +1🎵 Brigão.</div>
+              <div id="sinc-banner" class="energ-banner sinc-banner hidden">🎵 ATIVA — clique "Acerto" a cada acerto de aliado</div>
+              <div class="kit-card-footer">
+                <div class="kit-uses" id="kit-sinc-uses"></div>
+                <button class="btn btn-sm" id="btn-sinc-usar">Ativar</button>
+                <button class="btn btn-sm btn-danger hidden" id="btn-sinc-desativar">Desativar</button>
+                <button class="btn btn-sm btn-success" id="btn-sinc-acerto">Acerto (+<span id="sinc-gain-num">1</span>🎵)</button>
+                <button class="btn btn-sm btn-muted" id="btn-sinc-rest" title="Descanso curto">↺</button>
+              </div>
+            </div>
+
+            <!-- Recarga Sinfônica -->
+            <div class="kit-card kit-card-wide">
+              <div class="kit-card-header">
+                <span class="kit-name">Recarga Sinfônica</span>
+                <span class="ability-tag tag-action">Ação Bônus</span>
+              </div>
+              <div class="kit-card-desc">Gasta 10🎵 Brigão. Recupera 1 magia até nível 3. Vantagem no próximo ataque. Cura 1d10.</div>
+              <div class="kit-card-footer">
+                <button class="btn btn-sm btn-danger" id="btn-recarga-usar">Usar (−10 🎵 + rolar 1d10 cura)</button>
+              </div>
+            </div>
+
+          </div><!-- /kit-grid -->
+        </div><!-- /kit-sinfonico -->
+
+      </div><!-- /tab-sinfonia -->
+
+      <!-- SPELLS TAB -->
+      <div class="tab-panel" id="tab-spells">
+
+        <nav class="spell-view-nav" aria-label="Visualização de magias">
+          <button class="spell-view-btn active" data-spell-view="known">Minhas Magias</button>
+          <button class="spell-view-btn" data-spell-view="catalog">Grimório 5e</button>
+          <button class="spell-view-btn" data-spell-view="submundo">Submundo</button>
+        </nav>
+
+        <div class="spell-view-panel active" id="spell-view-known">
+
+        <div class="spell-effects-section" id="spell-effects-section">
+          <div class="spell-list-header">
+            <h3 class="section-title">Efeitos de Magia Ativos</h3>
+          </div>
+          <div id="spell-effects-list" class="spell-effects-list"></div>
+        </div>
+
+        <!-- Espaços de Magia -->
+        <div class="spell-slots-section spell-collapsible-section expanded" data-spell-section="slots">
+          <div class="spell-slots-header spell-collapsible-header" role="button" tabindex="0" aria-expanded="true">
+            <div>
+              <h3 class="section-title">Espaços de Magia</h3>
+              <p class="spell-slots-help">Clique em um marcador para gastar ou recuperar um espaço.</p>
+            </div>
+            <div class="spell-section-header-actions">
+              <button class="btn btn-sm btn-muted" id="btn-spell-long-rest" title="Descanso Longo — recupera todos os espaços">↺ Descanso Longo</button>
+              <span class="spell-section-chevron" aria-hidden="true">▼</span>
+            </div>
+          </div>
+          <div class="spell-collapsible-body">
+          <div class="spell-slots-legend"><span><i class="legend-slot-free"></i> Disponível</span><span><i class="legend-slot-used"></i> Gasto</span></div>
+          <div id="spell-slots-list" class="spell-slots-list"></div>
+          </div>
+        </div>
+
+        <!-- Magias cadastradas -->
+        <div class="spell-list-section spell-collapsible-section expanded" data-spell-section="known-spells">
+          <div class="spell-list-header spell-collapsible-header" role="button" tabindex="0" aria-expanded="true">
+            <h3 class="section-title">Magias</h3>
+            <div class="spell-section-header-actions">
+              <button class="btn btn-sm" id="btn-add-spell">+ Magia</button>
+              <span class="spell-section-chevron" aria-hidden="true">▼</span>
+            </div>
+          </div>
+          <div class="spell-collapsible-body">
+          <div id="spells-list" class="spells-list"></div>
+          </div>
+        </div>
+
+        </div>
+
+        <div class="spell-view-panel" id="spell-view-catalog">
+          <div class="spell-catalog-toolbar">
+            <label class="spell-catalog-search">
+              <span>Buscar</span>
+              <input id="spell-catalog-search" type="search" placeholder="Nome, descrição, escola…">
+            </label>
+            <label>
+              <span>Círculo</span>
+              <select id="spell-catalog-circle">
+                <option value="all">Todos</option>
+                <option value="0">Truques</option>
+                {% for circle in range(1, 10) %}
+                <option value="{{ circle }}">Círculo {{ circle }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Classe</span>
+              <select id="spell-catalog-class">
+                <option value="all">Todas</option>
+                <option value="bardo">Bardo</option>
+                <option value="bruxo">Bruxo</option>
+                <option value="clérigo">Clérigo</option>
+                <option value="druida">Druida</option>
+                <option value="feiticeiro">Feiticeiro</option>
+                <option value="mago">Mago</option>
+                <option value="paladino">Paladino</option>
+                <option value="patrulheiro">Patrulheiro</option>
+              </select>
+            </label>
+          </div>
+          <div class="spell-catalog-summary" id="spell-catalog-summary">Carregando grimório…</div>
+          <div class="spell-catalog-list" id="spell-catalog-list"></div>
+        </div>
+
+        <div class="spell-view-panel" id="spell-view-submundo">
+          <div class="submundo-card">
+            <h3 class="section-title">Submundo</h3>
+            <p class="submundo-help">Sorteie uma magia do Grimório 5e entre os círculos escolhidos.</p>
+            <div class="submundo-controls">
+              <label>Do círculo
+                <select id="submundo-from">
+                  <option value="0">Truques (0)</option>
+                  {% for circle in range(1, 10) %}
+                  <option value="{{ circle }}" {% if circle == 1 %}selected{% endif %}>Círculo {{ circle }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>Até o círculo
+                <select id="submundo-to">
+                  <option value="0">Truques (0)</option>
+                  {% for circle in range(1, 10) %}
+                  <option value="{{ circle }}" {% if circle == 1 %}selected{% endif %}>Círculo {{ circle }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <div class="submundo-summary" id="submundo-summary">Carregando magias…</div>
+            <button type="button" class="btn" id="submundo-roll" disabled>Rolar</button>
+            <div class="submundo-result" id="submundo-result" aria-live="polite"></div>
+          </div>
+        </div>
+
+      </div><!-- /tab-spells -->
+
+      <!-- NOTES TAB -->
+      <div class="tab-panel" id="tab-notes">
+        <div class="sticky-toolbar">
+          <span class="section-title">Anotações</span>
+          <div class="sticky-color-btns">
+            <button class="btn btn-sm sticky-add-btn" data-color="yellow">+ Amarelo</button>
+            <button class="btn btn-sm sticky-add-btn" data-color="blue">+ Azul</button>
+            <button class="btn btn-sm sticky-add-btn" data-color="green">+ Verde</button>
+            <button class="btn btn-sm sticky-add-btn" data-color="pink">+ Rosa</button>
+          </div>
+        </div>
+        <div id="sticky-board" class="sticky-board"></div>
+      </div>
+    </main>
+
+    <!-- ROLAGENS -->
+    <aside class="col-rolls">
+      <div class="rolls-header">
+        <h2 class="section-title">Rolagens</h2>
+        <button class="btn btn-sm btn-muted" id="btn-clear-rolls" title="Limpar histórico">✕ Limpar</button>
+      </div>
+      <div class="free-roll">
+        <input id="roll-expr" type="text" placeholder="Ex: 1d20+5" class="input-roll-expr">
+        <button class="btn" id="btn-free-roll">Rolar</button>
+      </div>
+      <div class="dice-quick">
+        <button class="btn btn-sm dice-quick-btn" data-dice="1d4">d4</button>
+        <button class="btn btn-sm dice-quick-btn" data-dice="1d6">d6</button>
+        <button class="btn btn-sm dice-quick-btn" data-dice="1d8">d8</button>
+        <button class="btn btn-sm dice-quick-btn" data-dice="1d10">d10</button>
+        <button class="btn btn-sm dice-quick-btn" data-dice="1d12">d12</button>
+        <button class="btn btn-sm dice-quick-btn" data-dice="1d20">d20</button>
+        <button class="btn btn-sm dice-quick-btn" data-dice="1d100">d100</button>
+      </div>
+      <div id="roll-history" class="roll-history"></div>
+    </aside>
+
+  </div><!-- /main-grid -->
+
+
+</div><!-- /sheet -->
+
+<!-- FLOATING DICE (mobile) -->
+<button id="btn-dice-float" class="btn-dice-float" title="Rolar Dados">🎲</button>
+
+<!-- MODALS -->
+<div id="modal-overlay" class="modal-overlay hidden">
+  <div class="modal" id="modal-box">
+    <button class="modal-close" id="modal-close">✕</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/character.js"></script>
+<script src="/static/js/dice.js"></script>
+<script src="/static/js/autosave.js"></script>
+<script src="/static/js/app.js"></script>
+{% endblock %}

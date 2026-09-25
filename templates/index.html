@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Personagens{% endblock %}
+{% block content %}
+<div class="index-page">
+  <h1>Personagens</h1>
+  <ul class="char-list">
+    {% for c in characters %}
+    <li class="char-list-item">
+      <a href="/character/{{ c.id }}">
+        <strong>{{ c.name }}</strong>
+        {% if c.class_name %} — {{ c.class_name }}{% endif %}
+        Nível {{ c.level }}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  <form method="POST" action="/character/new" class="new-char-form">
+    <input type="text" name="name" placeholder="Nome do personagem" required>
+    <button type="submit">Criar Personagem</button>
+  </form>
+</div>
+{% endblock %}
