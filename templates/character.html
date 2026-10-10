@@ -103,6 +103,8 @@
         </div>
       </div>
 
+      <section id="blade-flourish-panel" class="combat-section flourish-panel hidden" aria-label="Floreio de Lâminas"></section>
+
       <!-- Cards situacionais: sempre visíveis, indicam estado ativo/inativo -->
       <div class="situational-cards">
 
@@ -119,16 +121,15 @@
           <button class="btn btn-sm btn-muted sit-action-btn hidden" id="btn-energ-reset-bar">↺ Resetar</button>
         </div>
 
-        <div class="status-card sit-card" id="vantagem-status-card">
-          <div class="sit-top">
-            <span class="sit-name">Vantagem</span>
-            <span class="sit-badge sit-badge-off">inativa</span>
+        <div class="status-card sit-card" id="bard-inspiration-card">
+          <div class="sit-top"><span class="sit-name">Inspiração de Bardo</span><span class="sit-badge" id="bard-inspiration-badge"></span></div>
+          <div class="sit-hero"><span class="sit-hero-icon">♪</span><span class="sit-hero-value" id="bard-inspiration-count">—</span></div>
+          <div class="sit-desc" id="bard-inspiration-formula">1d10 + metade do mod. CAR</div>
+          <div class="bard-inspiration-controls">
+            <button class="btn btn-sm" id="btn-bard-inspiration-use" title="Gastar uma inspiração e rolar">Usar e rolar</button>
+            <button class="btn btn-sm btn-muted" id="btn-bard-inspiration-restore" title="Recuperar uma inspiração">+1</button>
+            <button class="btn btn-sm btn-muted" id="btn-bard-inspiration-reset" title="Restaurar todas as inspirações">↺</button>
           </div>
-          <div class="sit-hero">
-            <span class="sit-hero-icon sit-van-icon">✦</span>
-          </div>
-          <div class="sit-desc">próximo ataque</div>
-          <button class="btn btn-sm btn-muted sit-action-btn hidden" id="btn-vantagem-consumir">Consumir ×</button>
         </div>
 
       </div>
@@ -235,6 +236,7 @@
 
       <!-- COMBAT TAB -->
       <div class="tab-panel" id="tab-combat">
+        
         <div class="combat-section">
           <div class="combat-section-header">
             <div>
@@ -416,6 +418,8 @@
               </div>
               <div class="kit-card-desc">Gasta 10🎵 Brigão. Recupera 1 magia até nível 3. Vantagem no próximo ataque. Cura 1d10.</div>
               <div class="kit-card-footer">
+                <span id="recarga-vantagem-status" class="ability-tag hidden">Vantagem no próximo ataque</span>
+                <button class="btn btn-sm btn-muted hidden" id="btn-vantagem-consumir">Consumir vantagem ×</button>
                 <button class="btn btn-sm btn-danger" id="btn-recarga-usar">Usar (−10 🎵 + rolar 1d10 cura)</button>
               </div>
             </div>
@@ -551,9 +555,11 @@
             <button class="btn btn-sm sticky-add-btn" data-color="blue">+ Azul</button>
             <button class="btn btn-sm sticky-add-btn" data-color="green">+ Verde</button>
             <button class="btn btn-sm sticky-add-btn" data-color="pink">+ Rosa</button>
+            <button class="btn btn-sm sticky-add-btn" data-color="purple">+ Roxo</button>
           </div>
         </div>
-        <div id="sticky-board" class="sticky-board"></div>
+        <p class="sticky-help">Segure a alça ⠿ para reorganizar as notas ou arrastá-las para qualquer lugar da tela. Notas fixadas ficam visíveis em todas as abas. Puxe a borda direita, inferior ou o canto para aumentar ou reduzir, tanto no quadro quanto nas notas fixadas. Use ↩ para devolver ao quadro: notas maiores vão primeiro, e você pode reorganizá-las depois.</p>
+        <div id="sticky-board" class="sticky-board" aria-label="Quadro de anotações"></div>
       </div>
     </main>
 

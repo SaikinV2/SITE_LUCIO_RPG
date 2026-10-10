@@ -89,14 +89,83 @@ function getEffectiveAttr(char, attr) {
     + getTalentoBonus(char, attr);
 }
 
+function getItemPassiveCABonus(char) {
+  return (char.inventory || [])
+    .filter(item => item.active)
+    .flatMap(item => item.passives || [])
+    .filter(passive => passive.type === 'passive_ca')
+    .reduce((total, passive) => {
+      const bonus = Number(passive.value);
+      return total + (Number.isSafeInteger(bonus) && bonus >= 0 ? bonus : 0);
+    }, 0);
+}
+
+// Blade Flourish: turn boundaries are declared by the player.
+// Custom Bardic Inspiration: spent uses are independent of the changing maximum.
+function bardInspirationStats(char) {
+  const charismaMod = modifier(getEffectiveAttr(char, 'cha'));
+  const max = Math.max(0, charismaMod);
+  const spent = Math.max(0, Math.trunc(Number(char.bard_inspiration?.spent) || 0));
+  return { max, spent, current: Math.max(0, max - spent), bonus: Math.floor(charismaMod / 2) };
+}
+
+function spendBardInspiration(char) {
+  const stats = bardInspirationStats(char);
+  if (stats.current <= 0) return false;
+  char.bard_inspiration = { ...char.bard_inspiration, spent: stats.spent + 1 };
+  return true;
+}
+
+function restoreBardInspiration(char, all = false) {
+  const stats = bardInspirationStats(char);
+  char.bard_inspiration = { ...char.bard_inspiration, spent: all ? 0 : Math.max(0, stats.spent - 1) };
+}
+
+function bladeFlourishState(char) {
+  const state = char.blade_flourish ||= { ca_bonus: 0 };
+  if (!state.buffs) {
+    state.buffs = {};
+    if (state.ca_bonus > 0) state.buffs.master = { value: state.ca_bonus };
+  }
+  return state;
+}
+
+function resetBladeFlourish(char) {
+  char.blade_flourish = { buffs: {}, ca_bonus: 0 };
+}
+
+function toggleBladeFlourish(char, mode, rolledValue) {
+  if (!['master', 'inspiration'].includes(mode)) return false;
+  const state = bladeFlourishState(char);
+  let action;
+  if (state.buffs[mode]) {
+    delete state.buffs[mode];
+    action = 'disabled';
+  } else {
+    if (!Number.isInteger(rolledValue)) return false;
+    if (mode === 'master') {
+      if (rolledValue < 1 || rolledValue > 6) return false;
+    } else {
+      const stats = bardInspirationStats(char);
+      if (rolledValue < 1 + stats.bonus || rolledValue > 10 + stats.bonus || !spendBardInspiration(char)) return false;
+    }
+    state.buffs[mode] = { value: Math.max(0, rolledValue) };
+    action = 'enabled';
+  }
+  state.ca_bonus = Object.values(state.buffs).reduce((sum, buff) => sum + buff.value, 0);
+  return action;
+}
+
 function computeCA(char) {
+  const flourishCA = Math.max(0, Number(char.blade_flourish?.ca_bonus) || 0);
+  const itemCA = getItemPassiveCABonus(char);
   const armors = (char.inventory || []).filter(i => i.type === 'Armadura' && i.equipped);
   const talentoCA = getTalentoBonus(char, 'ca');
   const spellCA = (char.spell_effects || []).reduce(
     (total, effect) => total + (parseInt(effect.ca_bonus) || 0), 0
   );
   if (armors.length === 0) {
-    return 10 + modifier(getEffectiveAttr(char, 'dex')) + talentoCA + spellCA;
+    return 10 + modifier(getEffectiveAttr(char, 'dex')) + talentoCA + spellCA + itemCA + flourishCA;
   }
   return armors.reduce((total, armor) => {
     const base = parseInt(armor.ac_base) || parseInt(armor.ac_bonus) || 0;
@@ -108,7 +177,7 @@ function computeCA(char) {
       if (cap > 0) attrMod = Math.min(attrMod, cap);
     }
     return total + base + attrMod + flat;
-  }, 0) + talentoCA + spellCA;
+  }, 0) + talentoCA + spellCA + itemCA + flourishCA;
 }
 
 function skillTotal(char, skill) {

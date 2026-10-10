@@ -39,6 +39,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initInstabilidade();
   renderSpellSlots();
   initSpells();
+  initBladeFlourish();
+  initBardInspiration();
   initStickyNotes();
   initRest();
   initParseSheet();
@@ -95,6 +97,8 @@ function onFieldChange(e) {
     recalcAll();
   } else if (field.startsWith('attributes.')) {
     recalcAll();
+  } else if (field === 'speed' || field === 'class_name') {
+    renderBladeFlourish();
   } else if (field === 'initiative_bonus_manual') {
     recalcInitiative();
   }
@@ -221,6 +225,8 @@ function recalcAll() {
   recalcSaves();
   recalcSkills();
   recalcSpellStats();
+  renderBladeFlourish();
+  renderBardInspiration();
 }
 
 // ── SAVING THROWS ─────────────────────────────────
@@ -562,6 +568,82 @@ function ensureAttackForWeapon(item) {
     damage_type: item.damage_type,
     range: item.range
   });
+}
+
+// ── BARDIC INSPIRATION ─────────────────────────────
+function initBardInspiration() {
+  document.getElementById('btn-bard-inspiration-use')?.addEventListener('click', () => {
+    const stats = bardInspirationStats(char);
+    if (stats.current <= 0) return;
+    const formula = '1d10' + (stats.bonus ? (stats.bonus > 0 ? '+' : '') + stats.bonus : '');
+    const result = parseAndRoll(formula);
+    if (result.error || !spendBardInspiration(char)) return;
+    performRoll('Inspiração de Bardo', result);
+    renderBardInspiration(); renderBladeFlourish(); triggerAutosave();
+  });
+  document.getElementById('btn-bard-inspiration-restore')?.addEventListener('click', () => {
+    restoreBardInspiration(char); renderBardInspiration(); triggerAutosave();
+  });
+  document.getElementById('btn-bard-inspiration-reset')?.addEventListener('click', () => {
+    restoreBardInspiration(char, true); renderBardInspiration(); triggerAutosave();
+  });
+  renderBardInspiration();
+}
+
+function renderBardInspiration() {
+  const card = document.getElementById('bard-inspiration-card');
+  if (!card) return;
+  const stats = bardInspirationStats(char);
+  card.classList.toggle('sit-active', stats.current > 0);
+  document.getElementById('bard-inspiration-count').textContent = stats.current + '/' + stats.max;
+  const badge = document.getElementById('bard-inspiration-badge');
+  badge.textContent = stats.current > 0 ? 'disponível' : 'esgotada';
+  badge.className = 'sit-badge ' + (stats.current > 0 ? 'sit-badge-on' : 'sit-badge-off');
+  document.getElementById('bard-inspiration-formula').textContent = '1d10 ' + (stats.bonus >= 0 ? '+ ' : '− ') + Math.abs(stats.bonus) + ' · total = mod. CAR';
+  document.getElementById('btn-bard-inspiration-use').disabled = stats.current <= 0;
+  document.getElementById('btn-bard-inspiration-restore').disabled = stats.spent === 0;
+  document.getElementById('btn-bard-inspiration-reset').disabled = stats.spent === 0;
+}
+
+// ── BLADE FLOURISH ────────────────────────────────
+function initBladeFlourish() {
+  const panel = document.getElementById('blade-flourish-panel');
+  if (!panel) return;
+  panel.addEventListener('click', event => {
+    const button = event.target.closest('[data-flourish-action]');
+    if (!button || button.disabled) return;
+    const mode = button.dataset.flourishAction;
+    const state = bladeFlourishState(char);
+    if (state.buffs[mode]) {
+      toggleBladeFlourish(char, mode);
+    } else {
+      const stats = bardInspirationStats(char);
+      const formula = mode === 'master' ? '1d6' : '1d10' + (stats.bonus ? (stats.bonus > 0 ? '+' : '') + stats.bonus : '');
+      const result = parseAndRoll(formula);
+      if (result.error || !toggleBladeFlourish(char, mode, result.total)) return;
+      performRoll(mode === 'master' ? 'Dado Floreiro — bônus de CA' : 'Floreio com Inspiração de Bardo — bônus de CA', result);
+    }
+    recalcAll(); triggerAutosave();
+  });
+  renderBladeFlourish();
+}
+
+function renderBladeFlourish() {
+  const panel = document.getElementById('blade-flourish-panel');
+  if (!panel) return;
+  const enabled = /bardo/i.test(char.class_name || '') && Number(char.level) >= 3;
+  panel.classList.toggle('hidden', !enabled);
+  if (!enabled) return;
+  const state = bladeFlourishState(char);
+  const stats = bardInspirationStats(char);
+  panel.innerHTML = '<div class="flourish-simple-heading"><h3>Floreio</h3><span aria-live="polite">CA <strong>+' + (state.ca_bonus || 0) + '</strong></span></div><div class="flourish-controls">' +
+    ['master', 'inspiration'].map(mode => {
+      const buff = state.buffs[mode];
+      const label = mode === 'master' ? 'DADO FLOREIRO' : 'INSPIRAÇÃO DE BARDO';
+      const disabled = !buff && mode === 'inspiration' && stats.current <= 0;
+      const formula = mode === 'master' ? '1d6 · sem gastar inspiração' : '1d10 ' + (stats.bonus >= 0 ? '+ ' : '− ') + Math.abs(stats.bonus) + ' · gasta 1 inspiração';
+      return '<button class="btn btn-sm ' + (buff ? 'btn-armor-equipped' : '') + '" data-flourish-action="' + mode + '" aria-pressed="' + Boolean(buff) + '" title="' + (buff ? 'Clique novamente para encerrar o bônus de CA' : formula) + '" ' + (disabled ? 'disabled' : '') + '><span>' + label + '</span><small>' + (buff ? '+' + buff.value + ' CA · clique para encerrar' : formula) + '</small></button>';
+    }).join('') + '</div>';
 }
 
 // ── ABILITIES ─────────────────────────────────────
@@ -1006,7 +1088,7 @@ function openItemAbilModal(idx) {
       row.className = 'mutil-passive-row';
       row.innerHTML = `
         <select class="mutil-ptype" data-pi="${pi}">${typeOpts}</select>
-        <input class="mutil-pval" type="text" data-pi="${pi}" value="${esc(p.value||'')}" placeholder="Valor / Fórmula">
+        <input class="mutil-pval" type="${p.type === 'passive_ca' ? 'number' : 'text'}" ${p.type === 'passive_ca' ? 'min="0" step="1" aria-label="Bônus de CA"' : ''} data-pi="${pi}" value="${esc(p.value||'')}" placeholder="${p.type === 'passive_ca' ? 'Bônus de CA (ex: 2)' : 'Valor / Fórmula'}">
         <button type="button" class="delete-btn-small mutil-pdel" data-pi="${pi}">✕</button>`;
       list.appendChild(row);
     });
@@ -1237,6 +1319,7 @@ function initArmorListeners() {
 const PASSIVE_TYPE_LABELS = {
   passive_damage:   'Bônus de Dano',
   passive_sinfonia: 'Ganho de Sinfonia',
+  passive_ca:       'Aumento de CA',
 };
 
 const EFFECT_LABELS = {
@@ -1477,7 +1560,7 @@ function openEditUtilModal(idx) {
       row.className = 'mutil-passive-row';
       row.innerHTML = `
         <select class="mutil-ptype" data-pi="${i}">${typeOpts}</select>
-        <input class="mutil-pval" type="text" data-pi="${i}" value="${esc(p.value||'')}" placeholder="Valor / Fórmula">
+        <input class="mutil-pval" type="${p.type === 'passive_ca' ? 'number' : 'text'}" ${p.type === 'passive_ca' ? 'min="0" step="1" aria-label="Bônus de CA"' : ''} data-pi="${i}" value="${esc(p.value||'')}" placeholder="${p.type === 'passive_ca' ? 'Bônus de CA (ex: 2)' : 'Valor / Fórmula'}">
         <button type="button" class="delete-btn-small mutil-pdel" data-pi="${i}">✕</button>`;
       list.appendChild(row);
     });
@@ -1646,6 +1729,7 @@ function openEditUtilModal(idx) {
     syncItemAbilitiesToChar(item);
     renderUtils();
     renderAbilities();
+    recalcAll();
     triggerAutosave();
     closeModal();
   };
@@ -1921,6 +2005,9 @@ function renderSinfonia() {
   if (sinSkillRow) sinSkillRow.textContent = fmtMod(sinfoniaSkillTotal(char));
 
   recalcCA();
+
+  renderBardInspiration();
+  document.getElementById('recarga-vantagem-status')?.classList.toggle('hidden', !sin.vantagem_active);
 
   // Vantagem situational card
   const vanCard = document.getElementById('vantagem-status-card');
@@ -3039,6 +3126,7 @@ function initTabs() {
       const panel = document.getElementById(`tab-${tab}`);
       if (panel) panel.classList.add('active');
 
+      if (tab === 'notes') layoutStickyBoard();
       if (tab === 'abilities') {
         document.getElementById('btn-add-ability')?.addEventListener('click', openAddAbilityModal, { once: true });
         document.getElementById('btn-restore-all-uses')?.addEventListener('click', () => {
@@ -3103,58 +3191,230 @@ document.getElementById('modal-overlay')?.addEventListener('click', e => {
 });
 
 // ── STICKY NOTES ──────────────────────────────────
-function initStickyNotes() {
-  if (!char.sticky_notes) char.sticky_notes = [];
-  renderStickyNotes();
+let stickyDrag = null;
+let stickyLayer;
 
+function initStickyNotes() {
+  char.sticky_notes ||= [];
+  stickyLayer = document.createElement('div');
+  stickyLayer.id = 'sticky-floating-layer';
+  stickyLayer.setAttribute('aria-label', 'Anotações fixadas');
+  document.body.appendChild(stickyLayer);
+  const board = document.getElementById('sticky-board');
+  [board, stickyLayer].filter(Boolean).forEach(surface => {
+    surface.addEventListener('input', event => {
+      const ta = event.target.closest('.sticky-textarea');
+      const note = ta && char.sticky_notes.find(n => n.id === ta.dataset.noteId);
+      if (note) { note.text = ta.value; triggerAutosave(); }
+    });
+    surface.addEventListener('click', event => {
+      const button = event.target.closest('[data-note-action]');
+      if (!button) return;
+      const note = char.sticky_notes.find(n => n.id === button.closest('.sticky-note').dataset.noteId);
+      if (!note) return;
+      if (button.dataset.noteAction === 'delete') char.sticky_notes = char.sticky_notes.filter(n => n !== note);
+      if (button.dataset.noteAction === 'return') returnStickyNote(note);
+      if (['previous', 'next'].includes(button.dataset.noteAction)) {
+        const notes = char.sticky_notes.filter(n => !n.position);
+        const other = notes[notes.indexOf(note) + (button.dataset.noteAction === 'previous' ? -1 : 1)];
+        if (other) {
+          const i = char.sticky_notes.indexOf(note), j = char.sticky_notes.indexOf(other);
+          [char.sticky_notes[i], char.sticky_notes[j]] = [other, note];
+        }
+      }
+      renderStickyNotes(); triggerAutosave();
+    });
+    surface.addEventListener('pointerdown', startStickyDrag);
+  });
+  document.addEventListener('pointermove', moveStickyDrag);
+  document.addEventListener('pointerup', event => finishStickyDrag(event, false));
+  document.addEventListener('pointercancel', event => finishStickyDrag(event, true));
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && stickyDrag) finishStickyDrag(null, true);
+  });
+  window.addEventListener('blur', () => { if (stickyDrag) finishStickyDrag(null, true); });
+  window.addEventListener('resize', () => {
+    if (stickyDrag) finishStickyDrag(null, true);
+    stickyLayer.querySelectorAll('.sticky-note').forEach(el => {
+      const note = char.sticky_notes.find(n => n.id === el.dataset.noteId);
+      positionStickyNote(el, note.position, note.size);
+    });
+    layoutStickyBoard();
+  });
   document.querySelectorAll('.sticky-add-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const note = { id: Date.now().toString(36), color: btn.dataset.color || 'yellow', text: '' };
+      const note = { id: crypto.randomUUID(), color: btn.dataset.color || 'yellow', text: '' };
       char.sticky_notes.push(note);
-      renderStickyNotes();
-      triggerAutosave();
+      renderStickyNotes(); triggerAutosave();
+      board.querySelectorAll('.sticky-textarea')[board.querySelectorAll('.sticky-textarea').length - 1]?.focus();
     });
   });
+  renderStickyNotes();
+}
+
+function stickyNoteArea(note) {
+  return (note.size?.width || 240) * (note.size?.height || 190);
+}
+
+function returnStickyNote(note) {
+  delete note.position;
+  // Apply size priority only on return; later manual moves keep their order.
+  const boardNotes = char.sticky_notes.filter(n => !n.position).sort((a, b) => stickyNoteArea(b) - stickyNoteArea(a));
+  char.sticky_notes = [...boardNotes, ...char.sticky_notes.filter(n => n.position)];
+}
+
+function layoutStickyBoard() {
+  const board = document.getElementById('sticky-board');
+  if (!board || !board.clientWidth) return;
+  const available = Math.max(1, board.clientWidth - 24);
+  const columns = Math.max(1, Math.floor((available + 18) / 218));
+  const columnWidth = (available - (columns - 1) * 18) / columns;
+  board.querySelectorAll('.sticky-note:not(.sticky-dragging)').forEach(el => {
+    const note = char.sticky_notes.find(n => n.id === el.dataset.noteId);
+    const span = Math.min(columns, Math.max(1, Math.ceil(((note.size?.width || 200) + 18) / (columnWidth + 18))));
+    el.style.gridColumn = 'span ' + span;
+    if (note.size) {
+      el.style.height = Math.max(190, note.size.height) + 'px';
+      el.style.width = Math.min(available, Math.max(200, note.size.width)) + 'px';
+    }
+  });
+}
+
+function positionStickyNote(el, position, size) {
+  const width = Math.min(size?.width || 240, window.innerWidth - 24);
+  el.style.width = width + 'px';
+  el.style.height = Math.min(size?.height || 190, window.innerHeight - 24) + 'px';
+  el.style.left = Math.max(12, Math.min(1, Math.max(0, position.x || 0)) * Math.max(0, window.innerWidth - width - 24) + 12) + 'px';
+  el.style.top = Math.max(12, Math.min(1, Math.max(0, position.y || 0)) * Math.max(0, window.innerHeight - el.offsetHeight - 24) + 12) + 'px';
 }
 
 function renderStickyNotes() {
   const board = document.getElementById('sticky-board');
-  if (!board) return;
-  if (!char.sticky_notes) char.sticky_notes = [];
-  board.innerHTML = '';
+  if (!board || !stickyLayer) return;
+  board.replaceChildren(); stickyLayer.replaceChildren();
+  const colors = ['yellow', 'blue', 'green', 'pink', 'purple'];
+  char.sticky_notes.forEach(note => {
+    const el = document.createElement('article');
+    el.className = 'sticky-note sticky-' + (colors.includes(note.color) ? note.color : 'yellow');
+    el.dataset.noteId = note.id;
+    el.innerHTML = '<div class="sticky-note-header"><span class="sticky-grip" title="Segure para arrastar">⠿ <span>Anotação</span></span><div class="sticky-actions">' +
+      (note.position ? '<button data-note-action="return" title="Voltar para a aba Anotações" aria-label="Voltar para a aba Anotações">↩</button>' : '<button data-note-action="previous" title="Mover para antes" aria-label="Mover para antes">←</button><button data-note-action="next" title="Mover para depois" aria-label="Mover para depois">→</button>') +
+      '<button class="sticky-del-btn" data-note-action="delete" title="Remover" aria-label="Remover anotação">×</button></div></div><textarea class="sticky-textarea" aria-label="Texto da anotação" placeholder="Escreva aqui…"></textarea>';
+el.insertAdjacentHTML('beforeend', '<span class="sticky-resize sticky-resize-right" data-resize="right" title="Arraste para ajustar a largura"></span><span class="sticky-resize sticky-resize-bottom" data-resize="bottom" title="Arraste para ajustar a altura"></span><span class="sticky-resize sticky-resize-corner" data-resize="both" title="Arraste para ajustar o tamanho">◢</span>');
+    const ta = el.querySelector('textarea'); ta.dataset.noteId = note.id; ta.value = note.text || '';
+    if (note.position) {
+      el.classList.add('sticky-floating');
 
-  if (char.sticky_notes.length === 0) {
-    board.innerHTML = '<p class="sticky-empty">Nenhuma anotação. Use os botões acima para criar um post-it.</p>';
+      stickyLayer.appendChild(el); positionStickyNote(el, note.position, note.size);
+    } else board.appendChild(el);
+  });
+  layoutStickyBoard();
+  if (!board.children.length) {
+    const empty = document.createElement('p'); empty.className = 'sticky-empty';
+    empty.textContent = char.sticky_notes.length ? 'Suas anotações estão fixadas na tela. Arraste-as de volta para este quadro quando quiser.' : 'Crie uma anotação e arraste pela alça para organizar ou fixar na tela.';
+    board.appendChild(empty);
+  }
+}
+
+function startStickyDrag(event) {
+  const resize = event.target.closest('[data-resize]');
+  if (event.button !== 0 || stickyDrag || event.target.closest('button') || (!resize && !event.target.closest('.sticky-note-header'))) return;
+  const el = event.target.closest('.sticky-note');
+  const rect = el.getBoundingClientRect();
+  stickyDrag = { el, pointer: event.pointerId, startX: event.clientX, startY: event.clientY, dx: event.clientX - rect.left, dy: event.clientY - rect.top, rect, resize: resize?.dataset.resize, wasFloating: el.classList.contains('sticky-floating'), originalParent: el.parentElement, originalNext: el.nextSibling, moved: false };
+  el.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function moveStickyDrag(event) {
+  const drag = stickyDrag;
+  if (!drag || drag.pointer !== event.pointerId) return;
+  if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5) return;
+  if (!drag.moved) {
+    drag.moved = true;
+    if (!drag.resize && !drag.el.classList.contains('sticky-floating')) {
+      drag.placeholder = document.createElement('div'); drag.placeholder.className = 'sticky-placeholder';
+      drag.placeholder.style.height = drag.rect.height + 'px'; drag.placeholder.style.gridColumn = drag.el.style.gridColumn; drag.el.before(drag.placeholder);
+    }
+    drag.el.classList.add('sticky-dragging');
+    if (!drag.resize || drag.wasFloating) {
+      Object.assign(drag.el.style, {position: 'fixed', width: drag.rect.width + 'px', height: drag.rect.height + 'px', margin: '0'});
+    }
+    document.body.classList.add(drag.resize ? 'sticky-is-resizing' : 'sticky-is-dragging');
+    if (drag.resize) document.body.dataset.stickyResize = drag.resize;
+  }
+  event.preventDefault();
+  if (drag.resize) {
+    const board = document.getElementById('sticky-board');
+    const available = Math.max(1, board.clientWidth - 24);
+    const maxWidth = drag.wasFloating ? window.innerWidth - drag.rect.left - 12 : available;
+    const maxHeight = drag.wasFloating ? window.innerHeight - drag.rect.top - 12 : Math.max(2000, drag.rect.height);
+    const width = drag.resize === 'bottom' ? drag.rect.width : Math.max(Math.min(200, maxWidth), Math.min(maxWidth, drag.rect.width + event.clientX - drag.startX));
+    const height = drag.resize === 'right' ? drag.rect.height : Math.max(Math.min(190, maxHeight), Math.min(maxHeight, drag.rect.height + event.clientY - drag.startY));
+    drag.el.style.width = width + 'px'; drag.el.style.height = height + 'px';
+    if (drag.wasFloating) {
+      drag.el.style.left = drag.rect.left + 'px'; drag.el.style.top = drag.rect.top + 'px';
+    } else {
+      const columns = Math.max(1, Math.floor((available + 18) / 218));
+      const columnWidth = (available - (columns - 1) * 18) / columns;
+      drag.el.style.gridColumn = 'span ' + Math.min(columns, Math.max(1, Math.ceil((width + 18) / (columnWidth + 18))));
+    }
     return;
   }
+  const left = Math.max(12, Math.min(window.innerWidth - drag.rect.width - 12, event.clientX - drag.dx));
+  const top = Math.max(12, Math.min(window.innerHeight - drag.rect.height - 12, event.clientY - drag.dy));
+  drag.el.style.left = left + 'px'; drag.el.style.top = top + 'px';
+  const board = document.getElementById('sticky-board'), rect = board.getBoundingClientRect();
+  drag.inBoard = rect.width > 0 && rect.height > 0 && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  board.classList.toggle('sticky-drop-active', drag.inBoard);
+  if (drag.inBoard) {
+    if (!drag.placeholder) { drag.placeholder = document.createElement('div'); drag.placeholder.className = 'sticky-placeholder'; drag.placeholder.style.height = drag.rect.height + 'px'; }
+    const cards = [...board.querySelectorAll('.sticky-note:not(.sticky-dragging)')];
+    const next = cards.find(card => { const r = card.getBoundingClientRect(); return event.clientY < r.top || (event.clientY <= r.bottom && event.clientX < r.left + r.width / 2); });
+    if (drag.placeholder.nextSibling !== (next || null) || drag.placeholder.parentElement !== board) {
+      const previous = new Map(cards.map(card => [card, card.getBoundingClientRect()]));
+      board.insertBefore(drag.placeholder, next || null);
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) cards.forEach(card => {
+        const before = previous.get(card), after = card.getBoundingClientRect();
+        if (before.x !== after.x || before.y !== after.y) card.animate([{transform: 'translate(' + (before.x - after.x) + 'px,' + (before.y - after.y) + 'px)'}, {transform: 'none'}], {duration: 160, easing: 'ease-out'});
+      });
+    }
+  } else if (drag.placeholder) drag.placeholder.remove();
+}
 
-  char.sticky_notes.forEach(note => {
-    const el = document.createElement('div');
-    el.className = `sticky-note sticky-${note.color}`;
-    el.dataset.noteId = note.id;
-    el.innerHTML = `
-      <div class="sticky-note-header">
-        <button class="sticky-del-btn" data-del-note="${note.id}" title="Remover">✕</button>
-      </div>
-      <textarea class="sticky-textarea" data-note-id="${note.id}" placeholder="Escreva aqui…">${esc(note.text)}</textarea>
-    `;
-    board.appendChild(el);
-  });
-
-  board.addEventListener('input', e => {
-    const ta = e.target.closest('[data-note-id]');
-    if (!ta) return;
-    const n = char.sticky_notes.find(n => n.id === ta.dataset.noteId);
-    if (n) { n.text = ta.value; triggerAutosave(); }
-  });
-
-  board.addEventListener('click', e => {
-    const delBtn = e.target.closest('[data-del-note]');
-    if (!delBtn) return;
-    char.sticky_notes = char.sticky_notes.filter(n => n.id !== delBtn.dataset.delNote);
-    renderStickyNotes();
+function finishStickyDrag(event, cancel) {
+  const drag = stickyDrag;
+  if (!drag || (event && event.pointerId !== drag.pointer)) return;
+  stickyDrag = null;
+  if (drag.el.hasPointerCapture(drag.pointer)) drag.el.releasePointerCapture(drag.pointer);
+  if (drag.moved && !cancel) {
+    const note = char.sticky_notes.find(n => n.id === drag.el.dataset.noteId);
+    if (drag.resize) {
+      const r = drag.el.getBoundingClientRect();
+      note.size = {width: Math.round(r.width), height: Math.round(r.height)};
+      if (drag.wasFloating) {
+        note.position = { x: (r.left - 12) / Math.max(1, window.innerWidth - r.width - 24), y: (r.top - 12) / Math.max(1, window.innerHeight - r.height - 24) };
+      }
+    } else if (drag.inBoard && drag.wasFloating) {
+      returnStickyNote(note);
+    } else if (drag.inBoard) {
+      let next = drag.placeholder?.nextElementSibling;
+      while (next && !next.matches('.sticky-note:not(.sticky-dragging)')) next = next.nextElementSibling;
+      const nextNote = next && char.sticky_notes.find(n => n.id === next.dataset.noteId);
+      delete note.position;
+      char.sticky_notes = char.sticky_notes.filter(n => n !== note);
+      char.sticky_notes.splice(nextNote ? char.sticky_notes.indexOf(nextNote) : char.sticky_notes.length, 0, note);
+    } else {
+      const r = drag.el.getBoundingClientRect();
+      note.position = { x: (r.left - 12) / Math.max(1, window.innerWidth - r.width - 24), y: (r.top - 12) / Math.max(1, window.innerHeight - r.height - 24) };
+    }
     triggerAutosave();
-  });
+  }
+  drag.placeholder?.remove();
+  document.body.classList.remove('sticky-is-dragging', 'sticky-is-resizing');
+  delete document.body.dataset.stickyResize;
+  document.getElementById('sticky-board')?.classList.remove('sticky-drop-active');
+  if (drag.moved) renderStickyNotes();
 }
 
 // ── REST ──────────────────────────────────────────
@@ -3164,6 +3424,8 @@ function initRest() {
 }
 
 function doLongRest() {
+  restoreBardInspiration(char, true);
+  resetBladeFlourish(char);
   // HP total
   char.hit_points.current = char.hit_points.max || 0;
   char.hit_points.temporary = 0;
